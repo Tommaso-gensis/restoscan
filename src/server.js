@@ -17,6 +17,24 @@ for (const d of [UPLOADS, OUTPUT, TEMPLATES]) if (!existsSync(d)) mkdirSync(d, {
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
+
+// --- Protection par mot de passe (HTTP Basic) ---
+// Défini via variable d'env RESTOSCAN_PASS (défaut: "resto" pour la démo).
+const PASS = process.env.RESTOSCAN_PASS || "resto";
+const USER = process.env.RESTOSCAN_USER || "tommaso";
+app.use((req, res, next) => {
+  // /api/health reste ouvert (ping)
+  if (req.path === "/api/health") return next();
+  const h = req.headers.authorization || "";
+  const [type, b64] = h.split(" ");
+  if (type === "Basic" && b64) {
+    const [u, p] = Buffer.from(b64, "base64").toString().split(":");
+    if (u === USER && p === PASS) return next();
+  }
+  res.set("WWW-Authenticate", 'Basic realm="RestoScan"');
+  res.status(401).send("Authentification requise");
+});
+
 app.use(express.static(join(ROOT, "public")));
 
 const upload = multer({ dest: UPLOADS, limits: { fileSize: 20 * 1024 * 1024 } });
