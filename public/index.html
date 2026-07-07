@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RestoScan — Gestion facile pour restaurateurs</title>
+<style>
+  :root{
+    --vert:#2e7d5b; --vert-clair:#e8f5ee; --marchandise:#2e7d5b; --frais:#c17817;
+    --gris:#f5f6f8; --bord:#e0e3e8; --texte:#1f2a37; --doux:#6b7280;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       background:var(--gris);color:var(--texte);line-height:1.5}
+  header{background:var(--vert);color:#fff;padding:18px 24px;display:flex;align-items:center;gap:12px}
+  header h1{font-size:20px;margin:0;font-weight:650}
+  header .tag{font-size:13px;opacity:.85;font-weight:400}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px}
+  .cartes{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+  .carte{background:#fff;border:1px solid var(--bord);border-radius:12px;padding:18px;cursor:pointer;
+         transition:.15s;position:relative}
+  .carte:hover{border-color:var(--vert);box-shadow:0 4px 14px rgba(46,125,91,.10)}
+  .carte .ico{font-size:26px}
+  .carte h3{margin:8px 0 4px;font-size:15px}
+  .carte p{margin:0;font-size:13px;color:var(--doux)}
+  .carte.actif{border-color:var(--vert);background:var(--vert-clair)}
+  .panneau{background:#fff;border:1px solid var(--bord);border-radius:12px;padding:20px;margin-bottom:20px}
+  .panneau h2{margin:0 0 4px;font-size:16px}
+  .panneau .sous{color:var(--doux);font-size:13px;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--bord)}
+  th{font-weight:600;color:var(--doux);font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+  td input,td select{width:100%;border:1px solid var(--bord);border-radius:6px;padding:5px 6px;font-size:13px}
+  td input:focus,td select:focus{outline:none;border-color:var(--vert)}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+  .badge.m{background:var(--vert-clair);color:var(--marchandise)}
+  .badge.f{background:#fdf1e3;color:var(--frais)}
+  .badge.v{background:#fff3cd;color:#8a6d00}
+  .btn{background:var(--vert);color:#fff;border:none;border-radius:8px;padding:10px 18px;
+       font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
+  .btn:hover{background:#25634a}
+  .btn.sec{background:#fff;color:var(--vert);border:1px solid var(--vert)}
+  .btn.mini{padding:5px 10px;font-size:12px}
+  .barre{display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  .resume{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
+  .stat{background:var(--gris);border-radius:10px;padding:12px}
+  .stat .n{font-size:22px;font-weight:700}
+  .stat .l{font-size:12px;color:var(--doux)}
+  .ok{background:var(--vert-clair);border:1px solid var(--vert);border-radius:10px;padding:14px;margin-top:14px}
+  .del{color:#c0392b;cursor:pointer;font-weight:700;border:none;background:none;font-size:16px}
+  .muted{color:var(--doux);font-size:12px}
+  select.mois{padding:8px;border-radius:8px;border:1px solid var(--bord);font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:24px">🌱</span>
+  <div>
+    <h1>RestoScan</h1>
+    <span class="tag">Vos factures triées, votre marge au jour près — pensé par un pro de la restauration</span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 3 zones de scan -->
+  <div class="cartes">
+    <div class="carte" data-flux="ca">
+      <div class="ico">💰</div>
+      <h3>Chiffre d'affaires</h3>
+      <p>Ticket Z / journal de caisse — ventilé par taux TVA</p>
+    </div>
+    <div class="carte actif" data-flux="marchandise">
+      <div class="ico">🥩</div>
+      <h3>Achats marchandise</h3>
+      <p>Ce qui sera revendu → calcul de la marge</p>
+    </div>
+    <div class="carte" data-flux="frais">
+      <div class="ico">🧾</div>
+      <h3>Autres achats & frais</h3>
+      <p>Loyer, énergie, déchets, services…</p>
+    </div>
+  </div>
+
+  <!-- Upload -->
+  <div class="panneau">
+    <h2>1. Déposez vos factures</h2>
+    <div class="sous">PDF ou photos. Elles seront lues, puis vous validez les montants avant génération.</div>
+    <input type="file" id="fichiers" multiple accept="application/pdf,image/*">
+    <span id="uploadInfo" class="muted"></span>
+  </div>
+
+  <!-- Saisie / validation -->
+  <div class="panneau">
+    <h2>2. Vérifiez les données lues</h2>
+    <div class="sous">Le tri marchandise / frais se met à jour automatiquement. Corrigez si besoin.</div>
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th style="width:90px">Date</th><th>Fournisseur</th><th style="width:90px">N° facture</th>
+          <th>Libellé</th><th style="width:70px">TVA %</th>
+          <th style="width:90px">HTVA</th><th style="width:80px">TVA</th><th style="width:90px">TTC</th>
+          <th style="width:120px">Catégorie</th><th style="width:30px"></th>
+        </tr>
+      </thead>
+      <tbody id="corps"></tbody>
+    </table>
+    <div class="barre">
+      <button class="btn sec mini" id="ajouter">+ Ajouter une ligne</button>
+      <button class="btn sec mini" id="exemple">Charger l'exemple (vos 5 factures)</button>
+    </div>
+  </div>
+
+  <!-- Génération -->
+  <div class="panneau">
+    <h2>3. Générez votre Excel</h2>
+    <div class="sous">Les factures s'injectent dans votre modèle (feuille du mois), formules préservées.</div>
+    <div class="barre">
+      <label>Feuille du mois&nbsp;
+        <select class="mois" id="mois">
+          <option>JANV 2026</option><option>FEVRIER 2026</option><option>MARS 2026</option>
+          <option>AVRIL 2026</option><option>MAI 2026</option><option>JUIN 2026</option>
+          <option>JUILLET 2026</option><option>AOUT 2026</option><option>SEPT 2026</option>
+          <option>OCT 2026</option><option>NOV 2026</option><option>DEC 2026</option>
+        </select>
+      </label>
+      <button class="btn" id="generer">⬇️ Générer & télécharger l'Excel</button>
+    </div>
+    <div id="sortie"></div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+node_modules/
+data/uploads/*
+data/output/*
+!data/uploads/.gitkeep
+!data/output/.gitkeep
+*.log
