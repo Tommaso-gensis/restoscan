@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RestoScan — Démo statique</title>
+<title>GENGIS · Mes chiffres — Démo</title>
 <style>
   :root{
     --vert:#2e7d5b; --vert-clair:#e8f5ee; --marchandise:#2e7d5b; --frais:#c17817;
@@ -15,6 +15,11 @@
   header{background:var(--vert);color:#fff;padding:18px 24px;display:flex;align-items:center;gap:12px}
   header h1{font-size:20px;margin:0;font-weight:650}
   header .tag{font-size:13px;opacity:.85;font-weight:400}
+  header .spacer{flex:1}
+  .mod-nav{display:flex;align-items:center;gap:4px;background:rgba(255,255,255,.14);border-radius:10px;padding:3px}
+  .mod-nav a{text-decoration:none;color:rgba(255,255,255,.8);font-size:13px;font-weight:600;padding:5px 11px;border-radius:7px}
+  .mod-nav a.on{background:#fff;color:var(--vert)}
+  .mod-nav a:hover:not(.on){color:#fff}
   .wrap{max-width:1100px;margin:0 auto;padding:24px}
   .demo-note{background:#fff3cd;border:1px solid #e0c060;border-radius:10px;padding:14px;margin-bottom:20px;
               font-size:13px;color:#8a6d00}
@@ -58,9 +63,14 @@
 <header>
   <span style="font-size:24px">🌱</span>
   <div>
-    <h1>RestoScan</h1>
+    <h1>GENGIS · Mes chiffres</h1>
     <span class="tag">Vos factures triées, votre marge au jour près — pensé par un pro de la restauration</span>
   </div>
+  <div class="spacer"></div>
+  <nav class="mod-nav" title="Naviguer entre les modules GENGIS">
+    <a href="https://ai-council-0q6f.onrender.com" title="Poser une question au conseil des IA">💬 Conseil</a>
+    <a href="./" class="on" title="Scanner factures et CA, suivre marge et food cost">📊 Mes chiffres</a>
+  </nav>
 </header>
 
 <div class="wrap">
