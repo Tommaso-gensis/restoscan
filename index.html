@@ -123,6 +123,9 @@
     <h2>2. Résumé du tri</h2>
     <div class="sous">Calculé automatiquement à partir des lignes ci-dessus.</div>
     <div id="resume"></div>
+    <div class="barre" id="barreConseil" style="display:none;margin-top:12px">
+      <button class="btn" id="demanderGengis" title="Envoyer ces chiffres au Conseil des IA pour un avis">💬 Un doute sur un chiffre ? Demander à GENGIS</button>
+    </div>
   </div>
 
   <div class="panneau">
@@ -242,7 +245,8 @@ function toutesLignes(){
 
 function majResume(){
   const lignes = toutesLignes();
-  if(lignes.length===0){resumeDiv.innerHTML='<div class="muted">Ajoutez des factures pour voir le résumé.</div>';return;}
+  const barre = document.getElementById("barreConseil");
+  if(lignes.length===0){resumeDiv.innerHTML='<div class="muted">Ajoutez des factures pour voir le résumé.</div>';if(barre)barre.style.display="none";return;}
   const march = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="marchandise");
   const frais = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="frais");
   const totM = march.reduce((a,x)=>a+(x.htva||0),0);
@@ -254,7 +258,42 @@ function majResume(){
       <div class="stat"><div class="n">${totM.toFixed(2)}€</div><div class="l">HTVA marchandise</div></div>
       <div class="stat"><div class="n">${totF.toFixed(2)}€</div><div class="l">HTVA frais</div></div>
     </div>`;
+  if(barre)barre.style.display="flex";
 }
+
+// Construit une question riche avec les vrais chiffres et ouvre GENGIS (le Conseil)
+// avec la question pre-remplie. C'est le pont "Mes chiffres" -> "Conseil".
+const GENGIS_URL = "https://ai-council-0q6f.onrender.com";
+function demanderAuConseil(){
+  const lignes = toutesLignes();
+  const march = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="marchandise");
+  const frais = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="frais");
+  const totM = march.reduce((a,x)=>a+(x.htva||0),0);
+  const totF = frais.reduce((a,x)=>a+(x.htva||0),0);
+  const totHT = totM + totF;
+  const partMarch = totHT>0 ? (totM/totHT*100) : 0;
+  const mois = (document.getElementById("mois")||{}).value || "";
+  const detail = lignes.map(x=>{
+    const c = classer(x.fournisseur,x.libelle,x.tauxTva).categorie;
+    return `- ${x.fournisseur} | ${x.libelle||""} | TVA ${x.tauxTva}% | ${Number(x.htva||0).toFixed(2)}€ HT | ${c}`;
+  }).join("\n");
+  const question =
+`Tu es expert-comptable et consultant en restauration. Voici mes chiffres de factures${mois?(" pour "+mois):""} (issus de mon outil RestoScan) :
+
+Total marchandise (achats revendus) : ${totM.toFixed(2)}€ HT sur ${march.length} facture(s)
+Total frais généraux : ${totF.toFixed(2)}€ HT sur ${frais.length} facture(s)
+Total dépenses HT : ${totHT.toFixed(2)}€
+Part marchandise : ${partMarch.toFixed(1)}%
+
+Détail des factures :
+${detail}
+
+Ma question : est-ce que ces chiffres te semblent cohérents pour un restaurant ? Repère toute anomalie (classement douteux, dépense anormale, ratio inhabituel) et donne-moi des conseils concrets pour améliorer ma marge.`;
+  const url = GENGIS_URL + "/?q=" + encodeURIComponent(question) + "&send=1";
+  window.open(url, "_blank");
+}
+
+document.getElementById("demanderGengis").onclick = demanderAuConseil;
 
 document.getElementById("ajouter").onclick = ()=>{creerLigne(ligneVide());majResume();};
 document.getElementById("exemple").onclick = ()=>{corps.innerHTML="";EXEMPLE.forEach(creerLigne);majResume();};
