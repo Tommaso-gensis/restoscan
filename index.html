@@ -146,8 +146,21 @@
   </div>
 
   <div class="panneau">
-    <h2>2. Résumé du tri</h2>
-    <div class="sous">Calculé automatiquement à partir des lignes ci-dessus.</div>
+    <h2>2. Votre chiffre d'affaires</h2>
+    <div class="sous">C'est ce que vous encaissez (ventes du mois, TTC ou HT). Sans lui, impossible de calculer votre marge. Prenez le total de votre caisse / tickets Z du mois.</div>
+    <div class="barre" style="align-items:center;gap:14px">
+      <label>Chiffre d'affaires du mois (HT)&nbsp;
+        <input id="ca" type="number" min="0" step="0.01" placeholder="ex: 12000" inputmode="decimal"
+               style="padding:9px 12px;border:1px solid var(--bord);border-radius:8px;font-size:16px;width:160px">
+        &nbsp;€
+      </label>
+      <span class="muted" style="font-size:13px">Si vous n'avez que le TTC, divisez par 1,12 (TVA 12% resto) — ou laissez, on reste indicatif.</span>
+    </div>
+  </div>
+
+  <div class="panneau">
+    <h2>3. Résumé &amp; marge</h2>
+    <div class="sous">Calculé automatiquement à partir de vos factures et de votre chiffre d'affaires.</div>
     <div id="resume"></div>
     <div class="barre" id="barreConseil" style="display:none;margin-top:12px">
       <button class="btn" id="demanderGengis" title="Envoyer ces chiffres au Conseil des IA pour un avis">💬 Un doute sur un chiffre ? Demander à GENGIS</button>
@@ -155,7 +168,7 @@
   </div>
 
   <div class="panneau">
-    <h2>3. Génération Excel</h2>
+    <h2>4. Génération Excel</h2>
     <div class="sous">Télécharge un vrai fichier .xlsx : une feuille par catégorie (marchandise / frais) plus un récapitulatif avec la marge.</div>
     <div class="barre">
       <label>Feuille du mois&nbsp;
@@ -284,13 +297,35 @@ function majResume(){
   const frais = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="frais");
   const totM = march.reduce((a,x)=>a+(x.htva||0),0);
   const totF = frais.reduce((a,x)=>a+(x.htva||0),0);
+  const ca = Number((document.getElementById("ca")||{}).value)||0;
+
+  let blocMarge = "";
+  if(ca>0){
+    const margeBrute = ca - totM;              // CA - coût des marchandises revendues
+    const margePct = ca>0 ? (margeBrute/ca*100) : 0;
+    const foodCost = ca>0 ? (totM/ca*100) : 0;  // ratio coût matiere
+    const resultat = ca - totM - totF;          // après frais généraux (indicatif)
+    const coulMarge = margePct>=65 ? "var(--vert)" : (margePct>=55 ? "#e67e22" : "#c0392b");
+    const coulFood = foodCost<=35 ? "var(--vert)" : (foodCost<=45 ? "#e67e22" : "#c0392b");
+    blocMarge = `
+      <div class="resume" style="margin-top:12px">
+        <div class="stat"><div class="n">${ca.toFixed(2)}€</div><div class="l">Chiffre d'affaires HT</div></div>
+        <div class="stat"><div class="n" style="color:${coulMarge}">${margeBrute.toFixed(2)}€</div><div class="l">Marge brute (CA − marchandise)</div></div>
+        <div class="stat"><div class="n" style="color:${coulMarge}">${margePct.toFixed(1)}%</div><div class="l">Taux de marge brute</div></div>
+        <div class="stat"><div class="n" style="color:${coulFood}">${foodCost.toFixed(1)}%</div><div class="l">Food cost (coût matière)</div></div>
+        <div class="stat"><div class="n">${resultat.toFixed(2)}€</div><div class="l">Reste après frais (indicatif)</div></div>
+      </div>`;
+  } else {
+    blocMarge = '<div class="muted" style="margin-top:10px">💡 Entrez votre chiffre d\'affaires ci-dessus pour voir votre marge et votre food cost.</div>';
+  }
+
   resumeDiv.innerHTML = `
     <div class="resume">
       <div class="stat"><div class="n" style="color:var(--marchandise)">${march.length}</div><div class="l">Marchandise</div></div>
       <div class="stat"><div class="n" style="color:var(--frais)">${frais.length}</div><div class="l">Frais</div></div>
       <div class="stat"><div class="n">${totM.toFixed(2)}€</div><div class="l">HTVA marchandise</div></div>
       <div class="stat"><div class="n">${totF.toFixed(2)}€</div><div class="l">HTVA frais</div></div>
-    </div>`;
+    </div>` + blocMarge;
   if(barre)barre.style.display="flex";
 }
 
@@ -305,7 +340,11 @@ function demanderAuConseil(){
   const totF = frais.reduce((a,x)=>a+(x.htva||0),0);
   const totHT = totM + totF;
   const partMarch = totHT>0 ? (totM/totHT*100) : 0;
+  const ca = Number((document.getElementById("ca")||{}).value)||0;
   const mois = (document.getElementById("mois")||{}).value || "";
+  const blocCA = ca>0
+    ? `\nChiffre d'affaires HT : ${ca.toFixed(2)}€\nMarge brute (CA − marchandise) : ${(ca-totM).toFixed(2)}€ (${(ca>0?(ca-totM)/ca*100:0).toFixed(1)}%)\nFood cost (marchandise / CA) : ${(ca>0?totM/ca*100:0).toFixed(1)}%\nReste après frais (indicatif) : ${(ca-totM-totF).toFixed(2)}€\n`
+    : "\n(Chiffre d'affaires non renseigné — marge non calculable.)\n";
   const detail = lignes.map(x=>{
     const c = classer(x.fournisseur,x.libelle,x.tauxTva).categorie;
     return `- ${x.fournisseur} | ${x.libelle||""} | TVA ${x.tauxTva}% | ${Number(x.htva||0).toFixed(2)}€ HT | ${c}`;
@@ -317,7 +356,7 @@ Total marchandise (achats revendus) : ${totM.toFixed(2)}€ HT sur ${march.lengt
 Total frais généraux : ${totF.toFixed(2)}€ HT sur ${frais.length} facture(s)
 Total dépenses HT : ${totHT.toFixed(2)}€
 Part marchandise : ${partMarch.toFixed(1)}%
-
+${blocCA}
 Détail des factures :
 ${detail}
 
@@ -361,16 +400,28 @@ function genererExcel(lignes){
   XLSX.utils.book_append_sheet(wb, wsF, "Frais");
 
   // Feuille Recap
-  const wsR = XLSX.utils.aoa_to_sheet([
+  const caX = Number((document.getElementById("ca")||{}).value)||0;
+  const lignesRecap = [
     ["RÉCAPITULATIF — "+mois],[],
     ["Achats marchandise (HTVA)", totM],
     ["Autres frais (HTVA)", totF],
     ["Total achats (HTVA)", totHT],[],
     ["Part marchandise", totHT>0?(totM/totHT):0],
-    [],["Nombre de factures", lignes.length],
-    ["Généré par", "GENGIS · Mes chiffres"],
-  ]);
-  wsR["B6"] && (wsR["B6"].z = "0.0%");
+  ];
+  if(caX>0){
+    lignesRecap.push(
+      [],
+      ["Chiffre d'affaires (HT)", caX],
+      ["Marge brute (CA − marchandise)", caX-totM],
+      ["Taux de marge brute", caX>0?((caX-totM)/caX):0],
+      ["Food cost (marchandise / CA)", caX>0?(totM/caX):0],
+      ["Reste après frais (indicatif)", caX-totM-totF]
+    );
+  }
+  lignesRecap.push([],["Nombre de factures", lignes.length],["Généré par", "GENGIS · Mes chiffres"]);
+  const wsR = XLSX.utils.aoa_to_sheet(lignesRecap);
+  wsR["B7"] && (wsR["B7"].z = "0.0%");
+  if(caX>0){ ["B11","B12"].forEach(c=>{ if(wsR[c]) wsR[c].z = "0.0%"; }); }
   XLSX.utils.book_append_sheet(wb, wsR, "Récap");
 
   const nomFichier = "RestoScan_"+mois.replace(/\s+/g,"_")+".xlsx";
@@ -453,8 +504,10 @@ async function scannerFacture(dataUrl, mime){
 // === Sauvegarde locale (survit au rechargement) ===
 const STORAGE_KEY = "restoscan_lignes_v1";
 const CODE_KEY = "restoscan_code_resto";
+const CA_KEY = "restoscan_ca_v1";
 function sauvegarder(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(toutesLignes())); }catch(e){}
+  try{ localStorage.setItem(CA_KEY, String((document.getElementById("ca")||{}).value||"")); }catch(e){}
   planifierSyncServeur();
 }
 function charger(){
@@ -470,11 +523,23 @@ document.getElementById("ajouter").onclick = ()=>{creerLigne(ligneVide());majRes
 document.getElementById("exemple").onclick = ()=>{corps.innerHTML="";EXEMPLE.forEach(creerLigne);majResume();sauvegarder();};
 
 document.querySelectorAll(".carte").forEach(c=>{
-  c.onclick=()=>{document.querySelectorAll(".carte").forEach(x=>x.classList.remove("actif"));c.classList.add("actif");};
+  c.onclick=()=>{
+    document.querySelectorAll(".carte").forEach(x=>x.classList.remove("actif"));c.classList.add("actif");
+    const flux = c.getAttribute("data-flux");
+    if(flux==="ca"){ const el=document.getElementById("ca"); if(el){ el.scrollIntoView({behavior:"smooth",block:"center"}); el.focus(); } }
+    else { const t=document.getElementById("tbl"); if(t) t.scrollIntoView({behavior:"smooth",block:"start"}); }
+  };
 });
 
 // Sauvegarde a chaque modification de ligne.
 corps.addEventListener("input", sauvegarder);
+
+// Chiffre d'affaires : recalcule la marge en direct et sauvegarde.
+const inputCA = document.getElementById("ca");
+if(inputCA){
+  try{ const caSauve = localStorage.getItem(CA_KEY); if(caSauve) inputCA.value = caSauve; }catch(e){}
+  inputCA.addEventListener("input", ()=>{ majResume(); sauvegarder(); });
+}
 
 // === Synchro serveur (partage entre appareils via un code resto) ===
 let codeResto = "";
@@ -500,7 +565,7 @@ async function envoyerAuServeur(){
     majStatutSync("Enregistrement…");
     const r = await fetch(GENGIS_URL+"/api/data/"+encodeURIComponent(codeResto), {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ lignes: toutesLignes() })
+      body: JSON.stringify({ lignes: toutesLignes(), ca: (document.getElementById("ca")||{}).value||"" })
     });
     const data = await r.json();
     if(data.ok){ majStatutSync("✅ Synchronisé ("+data.count+" ligne(s))", "var(--vert)"); }
@@ -522,6 +587,10 @@ async function connecterResto(code){
     codeResto = c;
     try{ localStorage.setItem(CODE_KEY, c); }catch(e){}
     inputCode.value = c;
+    if(data.ca!=null && document.getElementById("ca")){
+      document.getElementById("ca").value = data.ca;
+      try{ localStorage.setItem(CA_KEY, String(data.ca)); }catch(e){}
+    }
     if(Array.isArray(data.lignes) && data.lignes.length){
       corps.innerHTML="";
       data.lignes.forEach(creerLigne);
