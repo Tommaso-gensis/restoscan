@@ -67,6 +67,14 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs" type="module"></script>
+<script type="module">
+  // pdf.js sert a transformer un PDF (souvent un scan sans texte) en images
+  // que le modele vision peut lire. On l'expose globalement pour le reste du script.
+  import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs";
+  window.pdfjsLib = pdfjsLib;
+</script>
 </head>
 <body>
 <header>
@@ -147,7 +155,7 @@
 
   <div class="panneau">
     <h2>2. Vos recettes (journal de caisse)</h2>
-    <div class="sous">Une ligne par jour, comme dans votre Excel. Scannez le rapport Z du jour : GENGIS lit le CA par taux de TVA et les encaissements. Les paiements par carte restent modifiables à la main.</div>
+    <div class="sous">Une ligne par jour, comme dans votre Excel. Scannez le rapport Z du jour : GENGIS lit le CA par taux de TVA et les paiements carte. Ajoutez vos virements <b>banque</b> et votre <b>fond de caisse</b> — le <b>liquide</b> et la <b>caisse à compter</b> se calculent tout seuls (CA − carte − banque).</div>
 
     <div class="scanbox" id="scanboxZ">
       <div class="ico">🧾</div>
@@ -161,10 +169,13 @@
       <thead>
         <tr>
           <th style="width:105px">Date</th><th style="width:70px">N° Z</th>
-          <th style="width:95px">CA 6%</th><th style="width:95px">CA 12%</th><th style="width:95px">CA 21%</th>
-          <th style="width:100px">Total TVAC</th>
-          <th style="width:95px">Carte</th><th style="width:95px">Liquide</th><th style="width:95px">Autre</th>
-          <th style="width:90px">Écart</th><th style="width:30px"></th>
+          <th style="width:90px">CA 6%</th><th style="width:90px">CA 12%</th><th style="width:90px">CA 21%</th>
+          <th style="width:95px">Total TVAC</th>
+          <th style="width:90px">Carte</th><th style="width:90px">Banque</th>
+          <th style="width:90px" title="CA - carte - banque (calculé)">Liquide</th>
+          <th style="width:80px" title="Saisi en début d'activité">Fond caisse</th>
+          <th style="width:95px" title="Fond + liquide : à compter en fin de journée">Caisse à compter</th>
+          <th style="width:30px"></th>
         </tr>
       </thead>
       <tbody id="corpsZ"></tbody>
@@ -298,30 +309,43 @@ function lireLigne(tr){
 // et la repartition des encaissements (carte / liquide / autre).
 const corpsZ = document.getElementById("corpsZ");
 const resumeZ = document.getElementById("resumeZ");
-const CHAMPS_Z = ["date","num","ca6","ca12","ca21","totalTvac","carte","liquide","autre"];
-const NUM_Z = ["ca6","ca12","ca21","totalTvac","carte","liquide","autre"];
+// Champs saisis/scannes. 'liquide' et 'caisse' sont CALCULES, pas saisis.
+const NUM_Z = ["ca6","ca12","ca21","totalTvac","carte","banque","fond"];
+// Ordre d'affichage des colonnes : on intercale les 2 cases calculees.
+const COLS_Z = ["date","num","ca6","ca12","ca21","totalTvac","carte","banque","liquide","fond","caisse"];
+const CALC_Z = ["liquide","caisse"];
 
-function jourVide(){ return {date:"",num:"",ca6:"",ca12:"",ca21:"",totalTvac:"",carte:"",liquide:"",autre:""}; }
+function jourVide(){ return {date:"",num:"",ca6:"",ca12:"",ca21:"",totalTvac:"",carte:"",banque:"",fond:""}; }
+
+// Liquide theorique en caisse = CA du jour - carte - banque.
+function calcLiquide(j){
+  const total = Number(j.totalTvac)|| ((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
+  return total - (Number(j.carte)||0) - (Number(j.banque)||0);
+}
+// Caisse a compter en fin de journee = fond de caisse + liquide encaisse.
+function calcCaisse(j){ return (Number(j.fond)||0) + calcLiquide(j); }
 
 function creerJour(data){
   const tr = document.createElement("tr");
-  CHAMPS_Z.forEach(champ=>{
+  COLS_Z.forEach(col=>{
     const td = document.createElement("td");
-    const el = document.createElement("input");
-    if(champ==="date"){ el.type="date"; }
-    else if(NUM_Z.includes(champ)){ el.type="number"; el.step="0.01"; el.inputMode="decimal"; }
-    else { el.type="text"; }
-    el.value = data[champ]??"";
-    el.dataset.champz = champ;
-    el.addEventListener("input",()=>{ majEcart(tr); majResume(); sauvegarder(); });
-    td.appendChild(el);
+    if(CALC_Z.includes(col)){
+      // Cellule calculee (lecture seule) : liquide et caisse a compter.
+      td.className = "calc-"+col;
+      td.style.fontSize = "13px"; td.style.fontWeight = "600";
+    } else {
+      const el = document.createElement("input");
+      if(col==="date"){ el.type="date"; }
+      else if(NUM_Z.includes(col)){ el.type="number"; el.step="0.01"; el.inputMode="decimal"; }
+      else { el.type="text"; }
+      el.value = data[col]??"";
+      el.dataset.champz = col;
+      if(col==="fond") el.placeholder="fond";
+      el.addEventListener("input",()=>{ majEcart(tr); majResume(); sauvegarder(); });
+      td.appendChild(el);
+    }
     tr.appendChild(td);
   });
-  // Colonne ecart : total TVAC vs somme des encaissements.
-  const tdEcart = document.createElement("td");
-  tdEcart.className = "ecart";
-  tdEcart.style.fontSize = "13px";
-  tr.appendChild(tdEcart);
 
   const tdDel = document.createElement("td");
   const b = document.createElement("button");
@@ -350,36 +374,41 @@ function tousLesJours(){
     .filter(j=>j.date || j.totalTvac!=="" || j.ca6!=="" || j.ca12!=="" || j.ca21!=="");
 }
 
-// Verifie que les encaissements collent au CA du jour (controle de caisse).
+// Met a jour les 2 cases calculees de la ligne (liquide + caisse a compter).
 function majEcart(tr){
   const j = lireJour(tr);
-  const td = tr.querySelector(".ecart");
-  if(!td) return;
-  const total = Number(j.totalTvac)||0;
-  const enc = (Number(j.carte)||0)+(Number(j.liquide)||0)+(Number(j.autre)||0);
-  if(total===0 && enc===0){ td.textContent=""; return; }
-  const d = enc-total;
-  if(Math.abs(d)<0.01){ td.innerHTML='<span style="color:var(--vert)">✓ OK</span>'; }
-  else { td.innerHTML='<span style="color:#c0392b" title="Encaissements moins total TVAC">'+(d>0?"+":"")+d.toFixed(2)+'€</span>'; }
+  const total = Number(j.totalTvac)|| ((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
+  const tdLiq = tr.querySelector(".calc-liquide");
+  const tdCai = tr.querySelector(".calc-caisse");
+  if(total===0){ if(tdLiq)tdLiq.textContent=""; if(tdCai)tdCai.textContent=""; return; }
+  const liq = calcLiquide(j);
+  const cai = calcCaisse(j);
+  if(tdLiq){
+    const coul = liq < -0.01 ? "#c0392b" : "var(--vert)";
+    tdLiq.innerHTML = '<span style="color:'+coul+'" title="CA - carte - banque">'+liq.toFixed(2)+'€</span>';
+  }
+  if(tdCai){
+    tdCai.innerHTML = '<span title="Fond de caisse + liquide : ce que vous devez compter en fin de journee">'+cai.toFixed(2)+'€</span>';
+  }
 }
 
 // Total du CA encaisse sur le mois (TVAC) et sa conversion HT par taux.
 function totauxRecettes(){
   const jours = tousLesJours();
-  let tvac6=0, tvac12=0, tvac21=0, total=0, carte=0, liquide=0, autre=0;
+  let tvac6=0, tvac12=0, tvac21=0, total=0, carte=0, banque=0, liquide=0;
   jours.forEach(j=>{
     tvac6 += Number(j.ca6)||0;
     tvac12 += Number(j.ca12)||0;
     tvac21 += Number(j.ca21)||0;
     carte += Number(j.carte)||0;
-    liquide += Number(j.liquide)||0;
-    autre += Number(j.autre)||0;
+    banque += Number(j.banque)||0;
+    liquide += calcLiquide(j);
     const t = Number(j.totalTvac)||0;
     total += t || ((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
   });
   // Passage en HT : on retire la TVA taux par taux (comme votre feuille HTVA).
   const ht = (tvac6/1.06) + (tvac12/1.12) + (tvac21/1.21);
-  return {jours:jours.length, tvac6, tvac12, tvac21, total, carte, liquide, autre, ht};
+  return {jours:jours.length, tvac6, tvac12, tvac21, total, carte, banque, liquide, ht};
 }
 
 // Petit tableau de bord des recettes, sous le journal de caisse.
@@ -389,18 +418,16 @@ function majResumeZ(rec){
     resumeZ.innerHTML = '<div class="muted">Scannez un rapport Z ou ajoutez un jour pour voir vos recettes.</div>';
     return;
   }
-  const enc = rec.carte + rec.liquide + rec.autre;
-  const ecart = enc - rec.total;
-  const coulEcart = Math.abs(ecart)<0.01 ? "var(--vert)" : "#c0392b";
   const pctCarte = rec.total>0 ? (rec.carte/rec.total*100) : 0;
+  const pctLiq = rec.total>0 ? (rec.liquide/rec.total*100) : 0;
   resumeZ.innerHTML = `
     <div class="resume">
       <div class="stat"><div class="n">${rec.jours}</div><div class="l">Jour(s) saisi(s)</div></div>
       <div class="stat"><div class="n">${rec.total.toFixed(2)}€</div><div class="l">CA TVAC encaissé</div></div>
       <div class="stat"><div class="n">${rec.ht.toFixed(2)}€</div><div class="l">CA hors TVA</div></div>
       <div class="stat"><div class="n">${rec.carte.toFixed(2)}€</div><div class="l">Carte (${pctCarte.toFixed(0)}%)</div></div>
-      <div class="stat"><div class="n">${rec.liquide.toFixed(2)}€</div><div class="l">Liquide</div></div>
-      <div class="stat"><div class="n" style="color:${coulEcart}">${ecart.toFixed(2)}€</div><div class="l">Écart encaissements</div></div>
+      <div class="stat"><div class="n">${rec.banque.toFixed(2)}€</div><div class="l">Banque</div></div>
+      <div class="stat"><div class="n">${rec.liquide.toFixed(2)}€</div><div class="l">Liquide (${pctLiq.toFixed(0)}%)</div></div>
     </div>`;
 }
 
@@ -536,15 +563,16 @@ function genererExcel(lignes){
   const jours = tousLesJours();
   const rec = totauxRecettes();
   if(jours.length){
-    const enTeteZ = ["Date","N° Z","CA 6% TVAC","CA 12% TVAC","CA 21% TVAC","Total TVAC","Carte","Liquide","Autre","Écart"];
+    const enTeteZ = ["Date","N° Z","CA 6% TVAC","CA 12% TVAC","CA 21% TVAC","Total TVAC","Carte","Banque","Liquide (calc.)","Fond caisse","Caisse à compter"];
     const rowsZ = jours.map(j=>{
       const tot = Number(j.totalTvac)||((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
-      const enc = (Number(j.carte)||0)+(Number(j.liquide)||0)+(Number(j.autre)||0);
-      return [j.date,j.num,Number(j.ca6)||0,Number(j.ca12)||0,Number(j.ca21)||0,tot,Number(j.carte)||0,Number(j.liquide)||0,Number(j.autre)||0,enc-tot];
+      const liq = calcLiquide(j);
+      const cai = calcCaisse(j);
+      return [j.date,j.num,Number(j.ca6)||0,Number(j.ca12)||0,Number(j.ca21)||0,tot,Number(j.carte)||0,Number(j.banque)||0,liq,Number(j.fond)||0,cai];
     });
     const wsZ = XLSX.utils.aoa_to_sheet([
       ["RECETTES — journal de caisse — "+mois],[],enTeteZ,...rowsZ,[],
-      ["TOTAUX","",rec.tvac6,rec.tvac12,rec.tvac21,rec.total,rec.carte,rec.liquide,rec.autre,""],
+      ["TOTAUX","",rec.tvac6,rec.tvac12,rec.tvac21,rec.total,rec.carte,rec.banque,rec.liquide,"",""],
       [],["CA hors TVA (reconstitué)", rec.ht],
     ]);
     XLSX.utils.book_append_sheet(wb, wsZ, "Recettes");
@@ -610,8 +638,15 @@ async function traiterFichiers(files){
   let ok=0, ko=0, lignesAjoutees=0;
   for(const f of files){
     try{
-      const dataUrl = await lireFichier(f);
-      const factures = await scannerFacture(dataUrl, f.type);
+      // Un PDF est souvent un scan sans texte : on le rend en images cote
+      // navigateur (pdf.js), sinon le modele vision ne lit rien. Une image
+      // part telle quelle.
+      const images = await fichierEnImages(f);
+      let factures = null;
+      for(const img of images){
+        const lot = await scannerFacture(img, "image/jpeg");
+        if(lot && lot.length){ factures = (factures||[]).concat(lot); }
+      }
       if(factures && factures.length){
         factures.forEach(champs=>{ creerLigne({...ligneVide(), ...champs}); lignesAjoutees++; });
         ok++;
@@ -621,6 +656,30 @@ async function traiterFichiers(files){
   }
   majResume(); sauvegarder();
   scanStatus.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' fichier(s) lu(s), '+lignesAjoutees+' ligne(s) ajoutée(s)'+(ko?' · '+ko+' non lu(s), à saisir à la main':'')+'. Vérifiez les catégories.</span>';
+}
+
+// Transforme un fichier en tableau de data URLs image (JPEG).
+// - image  -> [dataUrl] tel quel
+// - PDF    -> une image par page via pdf.js (gere les scans sans couche texte)
+async function fichierEnImages(f){
+  const estPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name||"");
+  if(!estPdf){ return [await lireFichier(f)]; }
+  if(!window.pdfjsLib){ return [await lireFichier(f)]; } // fallback : on tente le PDF brut
+  const buf = await f.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({data:buf}).promise;
+  const images = [];
+  const maxPages = Math.min(pdf.numPages, 10); // garde-fou
+  for(let p=1; p<=maxPages; p++){
+    const page = await pdf.getPage(p);
+    // Echelle ~2x pour un OCR lisible sans exploser la taille.
+    const viewport = page.getViewport({scale:2});
+    const canvas = document.createElement("canvas");
+    canvas.width = viewport.width; canvas.height = viewport.height;
+    const ctx = canvas.getContext("2d");
+    await page.render({canvasContext:ctx, viewport}).promise;
+    images.push(canvas.toDataURL("image/jpeg", 0.85));
+  }
+  return images.length ? images : [await lireFichier(f)];
 }
 
 function lireFichier(file){
@@ -658,8 +717,12 @@ async function traiterFichiersZ(files){
   let ok=0, ko=0;
   for(const f of files){
     try{
-      const dataUrl = await lireFichier(f);
-      const z = await scannerZ(dataUrl, f.type);
+      const images = await fichierEnImages(f);
+      let z = null;
+      for(const img of images){
+        const r = await scannerZ(img, "image/jpeg");
+        if(r){ z = z ? fusionnerZ(z, r) : r; }
+      }
       if(z){
         // Si une ligne vide traine (au demarrage), on la remplace.
         const vide = [...corpsZ.querySelectorAll("tr")].find(tr=>{
@@ -690,7 +753,18 @@ async function scannerZ(dataUrl, mime){
     date: z.date||"", num: z.num||"",
     ca6: v(z.ca6), ca12: v(z.ca12), ca21: v(z.ca21),
     totalTvac: v(z.totalTvac),
-    carte: v(z.carte), liquide: v(z.liquide), autre: v(z.autre)
+    carte: v(z.carte), banque: v(z.banque), autre: v(z.autre)
+  };
+}
+
+// Un Z sur plusieurs pages : on additionne les montants, on garde date/num.
+function fusionnerZ(a, b){
+  const add = (x,y)=>{ const s=(Number(x)||0)+(Number(y)||0); return s?s:""; };
+  return {
+    date: a.date||b.date, num: a.num||b.num,
+    ca6:add(a.ca6,b.ca6), ca12:add(a.ca12,b.ca12), ca21:add(a.ca21,b.ca21),
+    totalTvac:add(a.totalTvac,b.totalTvac),
+    carte:add(a.carte,b.carte), banque:add(a.banque,b.banque), autre:add(a.autre,b.autre)
   };
 }
 
