@@ -146,16 +146,33 @@
   </div>
 
   <div class="panneau">
-    <h2>2. Votre chiffre d'affaires</h2>
-    <div class="sous">C'est ce que vous encaissez (ventes du mois, TTC ou HT). Sans lui, impossible de calculer votre marge. Prenez le total de votre caisse / tickets Z du mois.</div>
-    <div class="barre" style="align-items:center;gap:14px">
-      <label>Chiffre d'affaires du mois (HT)&nbsp;
-        <input id="ca" type="number" min="0" step="0.01" placeholder="ex: 12000" inputmode="decimal"
-               style="padding:9px 12px;border:1px solid var(--bord);border-radius:8px;font-size:16px;width:160px">
-        &nbsp;€
-      </label>
-      <span class="muted" style="font-size:13px">Si vous n'avez que le TTC, divisez par 1,12 (TVA 12% resto) — ou laissez, on reste indicatif.</span>
+    <h2>2. Vos recettes (journal de caisse)</h2>
+    <div class="sous">Une ligne par jour, comme dans votre Excel. Scannez le rapport Z du jour : GENGIS lit le CA par taux de TVA et les encaissements. Les paiements par carte restent modifiables à la main.</div>
+
+    <div class="scanbox" id="scanboxZ">
+      <div class="ico">🧾</div>
+      <strong>Scanner le rapport Z du jour</strong>
+      <p>Photo, fichier ou glisser-déposer (image ou PDF). GENGIS reprend le CA par taux (6 / 12 / 21%) et les encaissements. Le détail des ventes par famille est ignoré.</p>
+      <input type="file" id="scanInputZ" accept="image/*,application/pdf" capture="environment" multiple style="display:none">
     </div>
+    <div class="scan-status" id="scanStatusZ"></div>
+
+    <table id="tblZ" style="margin-top:16px">
+      <thead>
+        <tr>
+          <th style="width:105px">Date</th><th style="width:70px">N° Z</th>
+          <th style="width:95px">CA 6%</th><th style="width:95px">CA 12%</th><th style="width:95px">CA 21%</th>
+          <th style="width:100px">Total TVAC</th>
+          <th style="width:95px">Carte</th><th style="width:95px">Liquide</th><th style="width:95px">Autre</th>
+          <th style="width:90px">Écart</th><th style="width:30px"></th>
+        </tr>
+      </thead>
+      <tbody id="corpsZ"></tbody>
+    </table>
+    <div class="barre">
+      <button class="btn sec mini" id="ajouterZ">+ Ajouter un jour</button>
+    </div>
+    <div id="resumeZ" style="margin-top:12px"></div>
   </div>
 
   <div class="panneau">
@@ -274,6 +291,119 @@ function lireLigne(tr){
   return o;
 }
 
+// ================================================
+// JOURNAL DE CAISSE (recettes journalieres, style Excel de Tommaso)
+// ================================================
+// Une ligne = un jour = un rapport Z. On garde le CA par taux de TVA (TVAC)
+// et la repartition des encaissements (carte / liquide / autre).
+const corpsZ = document.getElementById("corpsZ");
+const resumeZ = document.getElementById("resumeZ");
+const CHAMPS_Z = ["date","num","ca6","ca12","ca21","totalTvac","carte","liquide","autre"];
+const NUM_Z = ["ca6","ca12","ca21","totalTvac","carte","liquide","autre"];
+
+function jourVide(){ return {date:"",num:"",ca6:"",ca12:"",ca21:"",totalTvac:"",carte:"",liquide:"",autre:""}; }
+
+function creerJour(data){
+  const tr = document.createElement("tr");
+  CHAMPS_Z.forEach(champ=>{
+    const td = document.createElement("td");
+    const el = document.createElement("input");
+    if(champ==="date"){ el.type="date"; }
+    else if(NUM_Z.includes(champ)){ el.type="number"; el.step="0.01"; el.inputMode="decimal"; }
+    else { el.type="text"; }
+    el.value = data[champ]??"";
+    el.dataset.champz = champ;
+    el.addEventListener("input",()=>{ majEcart(tr); majResume(); sauvegarder(); });
+    td.appendChild(el);
+    tr.appendChild(td);
+  });
+  // Colonne ecart : total TVAC vs somme des encaissements.
+  const tdEcart = document.createElement("td");
+  tdEcart.className = "ecart";
+  tdEcart.style.fontSize = "13px";
+  tr.appendChild(tdEcart);
+
+  const tdDel = document.createElement("td");
+  const b = document.createElement("button");
+  b.className="del"; b.textContent="×"; b.title="Supprimer ce jour";
+  b.onclick=()=>{ tr.remove(); majResume(); sauvegarder(); };
+  tdDel.appendChild(b);
+  tr.appendChild(tdDel);
+
+  corpsZ.appendChild(tr);
+  majEcart(tr);
+  return tr;
+}
+
+function lireJour(tr){
+  const o = {};
+  tr.querySelectorAll("[data-champz]").forEach(el=>{
+    let v = el.value;
+    if(NUM_Z.includes(el.dataset.champz)) v = v===""?"":Number(v);
+    o[el.dataset.champz] = v;
+  });
+  return o;
+}
+
+function tousLesJours(){
+  return [...corpsZ.querySelectorAll("tr")].map(lireJour)
+    .filter(j=>j.date || j.totalTvac!=="" || j.ca6!=="" || j.ca12!=="" || j.ca21!=="");
+}
+
+// Verifie que les encaissements collent au CA du jour (controle de caisse).
+function majEcart(tr){
+  const j = lireJour(tr);
+  const td = tr.querySelector(".ecart");
+  if(!td) return;
+  const total = Number(j.totalTvac)||0;
+  const enc = (Number(j.carte)||0)+(Number(j.liquide)||0)+(Number(j.autre)||0);
+  if(total===0 && enc===0){ td.textContent=""; return; }
+  const d = enc-total;
+  if(Math.abs(d)<0.01){ td.innerHTML='<span style="color:var(--vert)">✓ OK</span>'; }
+  else { td.innerHTML='<span style="color:#c0392b" title="Encaissements moins total TVAC">'+(d>0?"+":"")+d.toFixed(2)+'€</span>'; }
+}
+
+// Total du CA encaisse sur le mois (TVAC) et sa conversion HT par taux.
+function totauxRecettes(){
+  const jours = tousLesJours();
+  let tvac6=0, tvac12=0, tvac21=0, total=0, carte=0, liquide=0, autre=0;
+  jours.forEach(j=>{
+    tvac6 += Number(j.ca6)||0;
+    tvac12 += Number(j.ca12)||0;
+    tvac21 += Number(j.ca21)||0;
+    carte += Number(j.carte)||0;
+    liquide += Number(j.liquide)||0;
+    autre += Number(j.autre)||0;
+    const t = Number(j.totalTvac)||0;
+    total += t || ((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
+  });
+  // Passage en HT : on retire la TVA taux par taux (comme votre feuille HTVA).
+  const ht = (tvac6/1.06) + (tvac12/1.12) + (tvac21/1.21);
+  return {jours:jours.length, tvac6, tvac12, tvac21, total, carte, liquide, autre, ht};
+}
+
+// Petit tableau de bord des recettes, sous le journal de caisse.
+function majResumeZ(rec){
+  if(!resumeZ) return;
+  if(!rec || rec.jours===0){
+    resumeZ.innerHTML = '<div class="muted">Scannez un rapport Z ou ajoutez un jour pour voir vos recettes.</div>';
+    return;
+  }
+  const enc = rec.carte + rec.liquide + rec.autre;
+  const ecart = enc - rec.total;
+  const coulEcart = Math.abs(ecart)<0.01 ? "var(--vert)" : "#c0392b";
+  const pctCarte = rec.total>0 ? (rec.carte/rec.total*100) : 0;
+  resumeZ.innerHTML = `
+    <div class="resume">
+      <div class="stat"><div class="n">${rec.jours}</div><div class="l">Jour(s) saisi(s)</div></div>
+      <div class="stat"><div class="n">${rec.total.toFixed(2)}€</div><div class="l">CA TVAC encaissé</div></div>
+      <div class="stat"><div class="n">${rec.ht.toFixed(2)}€</div><div class="l">CA hors TVA</div></div>
+      <div class="stat"><div class="n">${rec.carte.toFixed(2)}€</div><div class="l">Carte (${pctCarte.toFixed(0)}%)</div></div>
+      <div class="stat"><div class="n">${rec.liquide.toFixed(2)}€</div><div class="l">Liquide</div></div>
+      <div class="stat"><div class="n" style="color:${coulEcart}">${ecart.toFixed(2)}€</div><div class="l">Écart encaissements</div></div>
+    </div>`;
+}
+
 function majCategorie(tr){
   const o = lireLigne(tr);
   const tdCat = tr.querySelector(".cat");
@@ -297,7 +427,9 @@ function majResume(){
   const frais = lignes.filter(x=>classer(x.fournisseur,x.libelle,x.tauxTva).categorie==="frais");
   const totM = march.reduce((a,x)=>a+(x.htva||0),0);
   const totF = frais.reduce((a,x)=>a+(x.htva||0),0);
-  const ca = Number((document.getElementById("ca")||{}).value)||0;
+  const rec = totauxRecettes();
+  majResumeZ(rec);
+  const ca = rec.ht;   // CA hors TVA, reconstitue depuis les rapports Z
 
   let blocMarge = "";
   if(ca>0){
@@ -316,7 +448,7 @@ function majResume(){
         <div class="stat"><div class="n">${resultat.toFixed(2)}€</div><div class="l">Reste après frais (indicatif)</div></div>
       </div>`;
   } else {
-    blocMarge = '<div class="muted" style="margin-top:10px">💡 Entrez votre chiffre d\'affaires ci-dessus pour voir votre marge et votre food cost.</div>';
+    blocMarge = '<div class="muted" style="margin-top:10px">💡 Scannez vos rapports Z (section 2) pour voir votre marge et votre food cost.</div>';
   }
 
   resumeDiv.innerHTML = `
@@ -340,7 +472,8 @@ function demanderAuConseil(){
   const totF = frais.reduce((a,x)=>a+(x.htva||0),0);
   const totHT = totM + totF;
   const partMarch = totHT>0 ? (totM/totHT*100) : 0;
-  const ca = Number((document.getElementById("ca")||{}).value)||0;
+  const recQ = totauxRecettes();
+  const ca = recQ.ht;
   const mois = (document.getElementById("mois")||{}).value || "";
   const blocCA = ca>0
     ? `\nChiffre d'affaires HT : ${ca.toFixed(2)}€\nMarge brute (CA − marchandise) : ${(ca-totM).toFixed(2)}€ (${(ca>0?(ca-totM)/ca*100:0).toFixed(1)}%)\nFood cost (marchandise / CA) : ${(ca>0?totM/ca*100:0).toFixed(1)}%\nReste après frais (indicatif) : ${(ca-totM-totF).toFixed(2)}€\n`
@@ -399,8 +532,26 @@ function genererExcel(lignes){
   const wsF = XLSX.utils.aoa_to_sheet([["AUTRES FRAIS — "+mois],[],enTete,...toRows(frais),[],["","","","","TOTAL HTVA",totF]]);
   XLSX.utils.book_append_sheet(wb, wsF, "Frais");
 
+  // Feuille Recettes (journal de caisse, une ligne par jour)
+  const jours = tousLesJours();
+  const rec = totauxRecettes();
+  if(jours.length){
+    const enTeteZ = ["Date","N° Z","CA 6% TVAC","CA 12% TVAC","CA 21% TVAC","Total TVAC","Carte","Liquide","Autre","Écart"];
+    const rowsZ = jours.map(j=>{
+      const tot = Number(j.totalTvac)||((Number(j.ca6)||0)+(Number(j.ca12)||0)+(Number(j.ca21)||0));
+      const enc = (Number(j.carte)||0)+(Number(j.liquide)||0)+(Number(j.autre)||0);
+      return [j.date,j.num,Number(j.ca6)||0,Number(j.ca12)||0,Number(j.ca21)||0,tot,Number(j.carte)||0,Number(j.liquide)||0,Number(j.autre)||0,enc-tot];
+    });
+    const wsZ = XLSX.utils.aoa_to_sheet([
+      ["RECETTES — journal de caisse — "+mois],[],enTeteZ,...rowsZ,[],
+      ["TOTAUX","",rec.tvac6,rec.tvac12,rec.tvac21,rec.total,rec.carte,rec.liquide,rec.autre,""],
+      [],["CA hors TVA (reconstitué)", rec.ht],
+    ]);
+    XLSX.utils.book_append_sheet(wb, wsZ, "Recettes");
+  }
+
   // Feuille Recap
-  const caX = Number((document.getElementById("ca")||{}).value)||0;
+  const caX = rec.ht;
   const lignesRecap = [
     ["RÉCAPITULATIF — "+mois],[],
     ["Achats marchandise (HTVA)", totM],
@@ -481,6 +632,68 @@ function lireFichier(file){
   });
 }
 
+// === Scan du rapport Z : photo/PDF -> GENGIS lit -> remplit un jour ===
+const scanboxZ = document.getElementById("scanboxZ");
+const scanInputZ = document.getElementById("scanInputZ");
+const scanStatusZ = document.getElementById("scanStatusZ");
+scanboxZ.onclick = ()=>scanInputZ.click();
+scanInputZ.onchange = async ()=>{
+  await traiterFichiersZ(Array.from(scanInputZ.files||[]));
+  scanInputZ.value="";
+};
+["dragenter","dragover"].forEach(ev=>scanboxZ.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); scanboxZ.classList.add("survol");
+}));
+["dragleave","drop"].forEach(ev=>scanboxZ.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); scanboxZ.classList.remove("survol");
+}));
+scanboxZ.addEventListener("drop", async e=>{
+  const files = Array.from(e.dataTransfer?.files||[]);
+  if(files.length) await traiterFichiersZ(files);
+});
+
+async function traiterFichiersZ(files){
+  if(!files.length) return;
+  scanStatusZ.innerHTML = '<span class="spin"></span>Lecture de '+files.length+' rapport(s) Z par GENGIS...';
+  let ok=0, ko=0;
+  for(const f of files){
+    try{
+      const dataUrl = await lireFichier(f);
+      const z = await scannerZ(dataUrl, f.type);
+      if(z){
+        // Si une ligne vide traine (au demarrage), on la remplace.
+        const vide = [...corpsZ.querySelectorAll("tr")].find(tr=>{
+          const j = lireJour(tr);
+          return !j.date && !j.totalTvac && !j.ca6 && !j.ca12 && !j.ca21;
+        });
+        if(vide) vide.remove();
+        creerJour({...jourVide(), ...z});
+        ok++;
+      } else ko++;
+    }catch(e){ ko++; }
+  }
+  majResume(); sauvegarder();
+  scanStatusZ.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' rapport(s) Z ajouté(s)'+(ko?' · '+ko+' non lu(s), à saisir à la main':'')+'. Vérifiez le montant carte, il reste modifiable.</span>';
+}
+
+async function scannerZ(dataUrl, mime){
+  const r = await fetch(GENGIS_URL+"/api/scan-z", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ dataUrl, mime })
+  });
+  if(!r.ok) return null;
+  const data = await r.json();
+  if(!data.ok || !data.z) return null;
+  const z = data.z;
+  const v = n => (n!=null && n!==0) ? n : "";
+  return {
+    date: z.date||"", num: z.num||"",
+    ca6: v(z.ca6), ca12: v(z.ca12), ca21: v(z.ca21),
+    totalTvac: v(z.totalTvac),
+    carte: v(z.carte), liquide: v(z.liquide), autre: v(z.autre)
+  };
+}
+
 async function scannerFacture(dataUrl, mime){
   const r = await fetch(GENGIS_URL+"/api/scan", {
     method:"POST", headers:{"Content-Type":"application/json"},
@@ -504,10 +717,10 @@ async function scannerFacture(dataUrl, mime){
 // === Sauvegarde locale (survit au rechargement) ===
 const STORAGE_KEY = "restoscan_lignes_v1";
 const CODE_KEY = "restoscan_code_resto";
-const CA_KEY = "restoscan_ca_v1";
+const JOURS_KEY = "restoscan_jours_v1";
 function sauvegarder(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(toutesLignes())); }catch(e){}
-  try{ localStorage.setItem(CA_KEY, String((document.getElementById("ca")||{}).value||"")); }catch(e){}
+  try{ localStorage.setItem(JOURS_KEY, JSON.stringify(tousLesJours())); }catch(e){}
   planifierSyncServeur();
 }
 function charger(){
@@ -518,28 +731,30 @@ function charger(){
     return Array.isArray(arr) && arr.length ? arr : null;
   }catch(e){ return null; }
 }
+function chargerJours(){
+  try{
+    const raw = localStorage.getItem(JOURS_KEY);
+    if(!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr : null;
+  }catch(e){ return null; }
+}
 
 document.getElementById("ajouter").onclick = ()=>{creerLigne(ligneVide());majResume();sauvegarder();};
 document.getElementById("exemple").onclick = ()=>{corps.innerHTML="";EXEMPLE.forEach(creerLigne);majResume();sauvegarder();};
+document.getElementById("ajouterZ").onclick = ()=>{creerJour(jourVide());majResume();sauvegarder();};
 
 document.querySelectorAll(".carte").forEach(c=>{
   c.onclick=()=>{
     document.querySelectorAll(".carte").forEach(x=>x.classList.remove("actif"));c.classList.add("actif");
     const flux = c.getAttribute("data-flux");
-    if(flux==="ca"){ const el=document.getElementById("ca"); if(el){ el.scrollIntoView({behavior:"smooth",block:"center"}); el.focus(); } }
-    else { const t=document.getElementById("tbl"); if(t) t.scrollIntoView({behavior:"smooth",block:"start"}); }
+    const cible = flux==="ca" ? document.getElementById("tblZ") : document.getElementById("tbl");
+    if(cible) cible.scrollIntoView({behavior:"smooth",block:"start"});
   };
 });
 
 // Sauvegarde a chaque modification de ligne.
 corps.addEventListener("input", sauvegarder);
-
-// Chiffre d'affaires : recalcule la marge en direct et sauvegarde.
-const inputCA = document.getElementById("ca");
-if(inputCA){
-  try{ const caSauve = localStorage.getItem(CA_KEY); if(caSauve) inputCA.value = caSauve; }catch(e){}
-  inputCA.addEventListener("input", ()=>{ majResume(); sauvegarder(); });
-}
 
 // === Synchro serveur (partage entre appareils via un code resto) ===
 let codeResto = "";
@@ -565,7 +780,7 @@ async function envoyerAuServeur(){
     majStatutSync("Enregistrement…");
     const r = await fetch(GENGIS_URL+"/api/data/"+encodeURIComponent(codeResto), {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ lignes: toutesLignes(), ca: (document.getElementById("ca")||{}).value||"" })
+      body: JSON.stringify({ lignes: toutesLignes(), jours: tousLesJours() })
     });
     const data = await r.json();
     if(data.ok){ majStatutSync("✅ Synchronisé ("+data.count+" ligne(s))", "var(--vert)"); }
@@ -587,9 +802,10 @@ async function connecterResto(code){
     codeResto = c;
     try{ localStorage.setItem(CODE_KEY, c); }catch(e){}
     inputCode.value = c;
-    if(data.ca!=null && document.getElementById("ca")){
-      document.getElementById("ca").value = data.ca;
-      try{ localStorage.setItem(CA_KEY, String(data.ca)); }catch(e){}
+    if(Array.isArray(data.jours)){
+      corpsZ.innerHTML="";
+      data.jours.forEach(creerJour);
+      try{ localStorage.setItem(JOURS_KEY, JSON.stringify(data.jours)); }catch(e){}
     }
     if(Array.isArray(data.lignes) && data.lignes.length){
       corps.innerHTML="";
@@ -612,6 +828,12 @@ inputCode.addEventListener("keydown", e=>{ if(e.key==="Enter") connecterResto(in
 const sauve = charger();
 if(sauve){ sauve.forEach(creerLigne); }
 else { EXEMPLE.forEach(creerLigne); }
+
+// Journal de caisse : reprendre les jours sauvegardes, sinon une ligne vide.
+const joursSauves = chargerJours();
+if(joursSauves){ joursSauves.forEach(creerJour); }
+else { creerJour(jourVide()); }
+
 majResume();
 
 // Si un code resto etait deja connecte, on se reconnecte (recharge depuis le serveur).
