@@ -85,7 +85,19 @@
 <div class="wrap">
 
   <div class="demo-note">
-    <strong>✅ Version fonctionnelle</strong> — Scannez vos factures par photo (lecture par GENGIS), le tri marchandise/frais est en direct (alcool et boissons → marchandise pour la marge), et le bouton génère un vrai fichier Excel téléchargeable. Vos lignes sont sauvegardées dans ce navigateur.
+    <strong>✅ Version fonctionnelle</strong> — Scannez vos factures par photo (lecture par GENGIS), le tri marchandise/frais est en direct (alcool et boissons → marchandise pour la marge), et le bouton génère un vrai fichier Excel téléchargeable. Avec un <strong>code resto</strong>, vos données se synchronisent entre votre téléphone et votre ordinateur.
+  </div>
+
+  <div class="panneau" id="syncbox" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:14px 16px;">
+    <span style="font-size:22px">🔗</span>
+    <div style="flex:1;min-width:180px">
+      <strong>Code resto</strong>
+      <div class="muted" style="font-size:13px">Le même code sur votre téléphone et votre ordinateur = les mêmes données partout.</div>
+    </div>
+    <input id="codeResto" type="text" placeholder="ex: chez-mario" autocomplete="off"
+           style="padding:9px 12px;border:1px solid var(--bord);border-radius:8px;font-size:15px;min-width:150px">
+    <button id="btnSync" class="btn" style="white-space:nowrap">Connecter</button>
+    <span id="syncStatus" class="muted" style="font-size:13px;flex-basis:100%"></span>
   </div>
 
   <div class="cartes">
@@ -433,8 +445,10 @@ async function scannerFacture(dataUrl, mime){
 
 // === Sauvegarde locale (survit au rechargement) ===
 const STORAGE_KEY = "restoscan_lignes_v1";
+const CODE_KEY = "restoscan_code_resto";
 function sauvegarder(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(toutesLignes())); }catch(e){}
+  planifierSyncServeur();
 }
 function charger(){
   try{
@@ -455,11 +469,80 @@ document.querySelectorAll(".carte").forEach(c=>{
 // Sauvegarde a chaque modification de ligne.
 corps.addEventListener("input", sauvegarder);
 
+// === Synchro serveur (partage entre appareils via un code resto) ===
+let codeResto = "";
+let syncTimer = null;
+const inputCode = document.getElementById("codeResto");
+const btnSync = document.getElementById("btnSync");
+const syncStatus = document.getElementById("syncStatus");
+
+function majStatutSync(txt, couleur){
+  syncStatus.innerHTML = couleur ? '<span style="color:'+couleur+'">'+txt+'</span>' : txt;
+}
+
+// Ecrit vers le serveur, mais pas a chaque frappe : on attend 1,2s de calme.
+function planifierSyncServeur(){
+  if(!codeResto) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(envoyerAuServeur, 1200);
+}
+
+async function envoyerAuServeur(){
+  if(!codeResto) return;
+  try{
+    majStatutSync("Enregistrement…");
+    const r = await fetch(GENGIS_URL+"/api/data/"+encodeURIComponent(codeResto), {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ lignes: toutesLignes() })
+    });
+    const data = await r.json();
+    if(data.ok){ majStatutSync("✅ Synchronisé ("+data.count+" ligne(s))", "var(--vert)"); }
+    else { majStatutSync("⚠️ "+(data.error||"erreur"), "#c0392b"); }
+  }catch(e){ majStatutSync("⚠️ Serveur injoignable", "#c0392b"); }
+}
+
+async function connecterResto(code){
+  const c = String(code||"").trim().toLowerCase();
+  if(!/^[a-z0-9_-]{3,40}$/.test(c)){
+    majStatutSync("⚠️ Code invalide (3-40 caractères : lettres, chiffres, - ou _).", "#c0392b");
+    return;
+  }
+  majStatutSync("Connexion…");
+  try{
+    const r = await fetch(GENGIS_URL+"/api/data/"+encodeURIComponent(c));
+    const data = await r.json();
+    if(!data.ok){ majStatutSync("⚠️ "+(data.error||"erreur"), "#c0392b"); return; }
+    codeResto = c;
+    try{ localStorage.setItem(CODE_KEY, c); }catch(e){}
+    inputCode.value = c;
+    if(Array.isArray(data.lignes) && data.lignes.length){
+      corps.innerHTML="";
+      data.lignes.forEach(creerLigne);
+      majResume();
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data.lignes)); }catch(e){}
+      majStatutSync("✅ Connecté à « "+c+" » — "+data.lignes.length+" ligne(s) chargée(s).", "var(--vert)");
+    } else {
+      // Rien sur le serveur : on y pousse ce qu'on a en local.
+      majStatutSync("✅ Connecté à « "+c+" » — vide, envoi de vos données actuelles…", "var(--vert)");
+      await envoyerAuServeur();
+    }
+  }catch(e){ majStatutSync("⚠️ Serveur injoignable.", "#c0392b"); }
+}
+
+btnSync.onclick = ()=>connecterResto(inputCode.value);
+inputCode.addEventListener("keydown", e=>{ if(e.key==="Enter") connecterResto(inputCode.value); });
+
 // Au demarrage : reprendre les lignes sauvegardees, sinon l'exemple.
 const sauve = charger();
 if(sauve){ sauve.forEach(creerLigne); }
 else { EXEMPLE.forEach(creerLigne); }
 majResume();
+
+// Si un code resto etait deja connecte, on se reconnecte (recharge depuis le serveur).
+try{
+  const codeSauve = localStorage.getItem(CODE_KEY);
+  if(codeSauve){ inputCode.value = codeSauve; connecterResto(codeSauve); }
+}catch(e){}
 </script>
 </body>
 </html>
