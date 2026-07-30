@@ -57,7 +57,15 @@
   .del{color:#c0392b;cursor:pointer;font-weight:700;border:none;background:none;font-size:16px}
   .muted{color:var(--doux);font-size:12px}
   select.mois{padding:8px;border-radius:8px;border:1px solid var(--bord);font-size:14px}
+  .scanbox{border:2px dashed var(--vert);border-radius:12px;padding:22px;text-align:center;background:var(--vert-clair);cursor:pointer;transition:.15s}
+  .scanbox:hover{background:#dcefe4}
+  .scanbox .ico{font-size:32px}
+  .scanbox p{margin:8px 0 0;font-size:13px;color:var(--doux)}
+  .scan-status{margin-top:12px;font-size:13px}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--vert);border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:middle;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 <header>
@@ -76,9 +84,7 @@
 <div class="wrap">
 
   <div class="demo-note">
-    <strong>📱 Version démo statique</strong> — Cette page fonctionne en local sans serveur. Le tri marchandise/frais 
-    est en direct (vous verrez les badges se mettre à jour), mais la génération Excel nécessite le serveur complet 
-    (option A ou B). Double-cliquez "Charger l'exemple" pour voir les 6 vraies factures triées automatiquement.
+    <strong>✅ Version fonctionnelle</strong> — Scannez vos factures par photo (lecture par GENGIS), le tri marchandise/frais est en direct (alcool et boissons → marchandise pour la marge), et le bouton génère un vrai fichier Excel téléchargeable. Vos lignes sont sauvegardées dans ce navigateur.
   </div>
 
   <div class="cartes">
@@ -101,8 +107,15 @@
 
   <div class="panneau">
     <h2>1. Saisissez vos factures</h2>
-    <div class="sous">Les catégories se mettent à jour en direct pendant que vous tapez.</div>
-    <table id="tbl">
+    <div class="sous">Scannez une photo de facture (GENGIS la lit et remplit la ligne), ou tapez à la main. Les catégories se mettent à jour en direct.</div>
+    <div class="scanbox" id="scanbox">
+      <div class="ico">📸</div>
+      <strong>Scanner une facture</strong>
+      <p>Prenez ou choisissez une photo (ou PDF). GENGIS lit le fournisseur, la date, le montant et la TVA, puis remplit une ligne automatiquement.</p>
+      <input type="file" id="scanInput" accept="image/*,application/pdf" capture="environment" multiple style="display:none">
+    </div>
+    <div class="scan-status" id="scanStatus"></div>
+    <table id="tbl" style="margin-top:16px">
       <thead>
         <tr>
           <th style="width:90px">Date</th><th>Fournisseur</th><th style="width:90px">N° facture</th>
@@ -130,7 +143,7 @@
 
   <div class="panneau">
     <h2>3. Génération Excel</h2>
-    <div class="sous">Dans la version complète (avec serveur), ce bouton injecte dans votre modèle et télécharge l'Excel.</div>
+    <div class="sous">Télécharge un vrai fichier .xlsx : une feuille par catégorie (marchandise / frais) plus un récapitulatif avec la marge.</div>
     <div class="barre">
       <label>Feuille du mois&nbsp;
         <select class="mois" id="mois">
@@ -149,20 +162,27 @@
 
 <script>
 // === Moteur de tri (copie du classifier.js serveur) ===
-const MARCH_F = ["colruyt","bv dirk marchand","dirk marchand","metro","bidfood","sligro","makro"];
+// Categorie 1 = MARCHANDISE (tout ce qui est revendu : nourriture ET alcool/boissons)
+//   -> sert au calcul de la marge / food cost.
+// Categorie 2 = FRAIS (tout le reste : charges, services, energie...).
+const MARCH_F = ["colruyt","bv dirk marchand","dirk marchand","metro","bidfood","sligro","makro","promocash","cash & carry","spadel","ab inbev","inbev","brasserie","brouwerij","caves"];
 const FRAIS_F = ["renewi","proximus","orange","engie","luminus","sabam","telenet"];
-const M_KW = ["aliment","fruit","legume","légume","boisson","viande","boucherie","poisson","fromage","vin","fourniture aliment"];
+// Mots-cles ALCOOL / BOISSONS -> marchandise, meme si TVA 21% (piege classique en Belgique).
+const ALCOOL_KW = ["alcool","biere","bière","bier","vin","vins","wine","champagne","spiritueux","whisky","vodka","rhum","gin","aperitif","apéritif","digestif","liqueur","pils","boisson","boissons","soft","softs","limonade","soda","cava","prosecco","porto","cocktail"];
+const M_KW = ["aliment","fruit","legume","légume","viande","boucherie","poisson","fromage","fourniture aliment","epicerie","épicerie","pain","boulangerie","patisserie","pâtisserie","volaille","charcuterie","surgele","surgelé","cafe","café","the","thé"].concat(ALCOOL_KW);
 const F_KW = ["consultance","consulting","dechet","déchet","vidange","loyer","energie","énergie","electricite","gaz","eau","assurance","honoraire","entretien","reparation","réparation","telephone","internet","comptable","publicite","nettoyage","location","leasing","abonnement"];
 
 function classer(fournisseur, libelle, tauxTva) {
   const f = (fournisseur||"").trim().toLowerCase();
   const l = (libelle||"").trim().toLowerCase();
+  // 1) Alcool / boissons = marchandise, en priorite absolue (sinon TVA 21% -> frais par erreur).
+  if (ALCOOL_KW.some(k=>l.includes(k))) return {categorie:"marchandise",motif:"alcool / boisson (marchandise)",confiance:0.95};
   if (F_KW.some(k=>l.includes(k))) return {categorie:"frais",motif:"mot-clé libellé",confiance:0.9};
   if (M_KW.some(k=>l.includes(k))) return {categorie:"marchandise",motif:"mot-clé libellé",confiance:0.9};
   if (MARCH_F.some(x=>f.includes(x))) return {categorie:"marchandise",motif:"fournisseur connu",confiance:0.85};
   if (FRAIS_F.some(x=>f.includes(x))) return {categorie:"frais",motif:"fournisseur connu",confiance:0.85};
   if (Number(tauxTva)===6) return {categorie:"marchandise",motif:"taux TVA 6%",confiance:0.5};
-  if (Number(tauxTva)===12) return {categorie:"marchandise",motif:"taux TVA 12%",confiance:0.4};
+  if (Number(tauxTva)===12) return {categorie:"marchandise",motif:"taux TVA 12% (boisson)",confiance:0.45};
   return {categorie:"frais",motif:"défaut (à vérifier)",confiance:0.3};
 }
 
@@ -295,20 +315,132 @@ Ma question : est-ce que ces chiffres te semblent cohérents pour un restaurant 
 
 document.getElementById("demanderGengis").onclick = demanderAuConseil;
 
-document.getElementById("ajouter").onclick = ()=>{creerLigne(ligneVide());majResume();};
-document.getElementById("exemple").onclick = ()=>{corps.innerHTML="";EXEMPLE.forEach(creerLigne);majResume();};
+document.getElementById("generer").onclick = ()=>{
+  const lignes = toutesLignes();
+  if(lignes.length===0){sortie.innerHTML='<div class="muted">Ajoutez au moins une facture.</div>';return;}
+  genererExcel(lignes);
+};
+
+// === Generation Excel reelle (SheetJS, cote navigateur, sans serveur) ===
+function genererExcel(lignes){
+  const mois = document.getElementById("mois").value;
+  const enrichies = lignes.map(x=>{
+    const c = classer(x.fournisseur,x.libelle,x.tauxTva);
+    return {...x, categorie:c.categorie, motif:c.motif};
+  });
+  const march = enrichies.filter(x=>x.categorie==="marchandise");
+  const frais = enrichies.filter(x=>x.categorie==="frais");
+  const totM = march.reduce((a,x)=>a+(Number(x.htva)||0),0);
+  const totF = frais.reduce((a,x)=>a+(Number(x.htva)||0),0);
+  const totHT = totM+totF;
+
+  const enTete = ["Date","Fournisseur","N° facture","Libellé","TVA %","HTVA","TVA","TTC","Motif tri"];
+  const toRows = arr => arr.map(x=>[x.date,x.fournisseur,x.num,x.libelle,Number(x.tauxTva)||0,Number(x.htva)||0,Number(x.tva)||0,Number(x.ttc)||0,x.motif]);
+
+  const wb = XLSX.utils.book_new();
+
+  // Feuille Marchandise
+  const wsM = XLSX.utils.aoa_to_sheet([["MARCHANDISE (revendu — base de la marge) — "+mois],[],enTete,...toRows(march),[],["","","","","TOTAL HTVA",totM]]);
+  XLSX.utils.book_append_sheet(wb, wsM, "Marchandise");
+
+  // Feuille Frais
+  const wsF = XLSX.utils.aoa_to_sheet([["AUTRES FRAIS — "+mois],[],enTete,...toRows(frais),[],["","","","","TOTAL HTVA",totF]]);
+  XLSX.utils.book_append_sheet(wb, wsF, "Frais");
+
+  // Feuille Recap
+  const wsR = XLSX.utils.aoa_to_sheet([
+    ["RÉCAPITULATIF — "+mois],[],
+    ["Achats marchandise (HTVA)", totM],
+    ["Autres frais (HTVA)", totF],
+    ["Total achats (HTVA)", totHT],[],
+    ["Part marchandise", totHT>0?(totM/totHT):0],
+    [],["Nombre de factures", lignes.length],
+    ["Généré par", "GENGIS · Mes chiffres"],
+  ]);
+  wsR["B6"] && (wsR["B6"].z = "0.0%");
+  XLSX.utils.book_append_sheet(wb, wsR, "Récap");
+
+  const nomFichier = "RestoScan_"+mois.replace(/\s+/g,"_")+".xlsx";
+  XLSX.writeFile(wb, nomFichier);
+  sortie.innerHTML = '<div class="ok">✅ Excel généré : <strong>'+nomFichier+'</strong> — '+march.length+' marchandise ('+totM.toFixed(2)+'€) + '+frais.length+' frais ('+totF.toFixed(2)+'€). Regardez vos téléchargements.</div>';
+}
+
+// === Scan de facture : photo/PDF -> GENGIS lit -> remplit une ligne ===
+const scanbox = document.getElementById("scanbox");
+const scanInput = document.getElementById("scanInput");
+const scanStatus = document.getElementById("scanStatus");
+scanbox.onclick = ()=>scanInput.click();
+scanInput.onchange = async ()=>{
+  const files = Array.from(scanInput.files||[]);
+  if(!files.length) return;
+  scanStatus.innerHTML = '<span class="spin"></span>Lecture de '+files.length+' facture(s) par GENGIS...';
+  let ok=0, ko=0;
+  for(const f of files){
+    try{
+      const dataUrl = await lireFichier(f);
+      const champs = await scannerFacture(dataUrl, f.type);
+      if(champs){ creerLigne({...ligneVide(), ...champs}); ok++; }
+      else ko++;
+    }catch(e){ ko++; }
+  }
+  majResume(); sauvegarder();
+  scanInput.value="";
+  scanStatus.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' facture(s) ajoutée(s)'+(ko?' · '+ko+' non lue(s), à saisir à la main':'')+'. Vérifiez les catégories.</span>';
+};
+
+function lireFichier(file){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+async function scannerFacture(dataUrl, mime){
+  const r = await fetch(GENGIS_URL+"/api/scan", {
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({ dataUrl, mime })
+  });
+  if(!r.ok) return null;
+  const data = await r.json();
+  if(!data.ok || !data.facture) return null;
+  const fac = data.facture;
+  return {
+    date: fac.date||"", fournisseur: fac.fournisseur||"", num: fac.num||"",
+    libelle: fac.libelle||"", tauxTva: fac.tauxTva!=null?fac.tauxTva:6,
+    htva: fac.htva!=null?fac.htva:"", tva: fac.tva!=null?fac.tva:"", ttc: fac.ttc!=null?fac.ttc:""
+  };
+}
+
+// === Sauvegarde locale (survit au rechargement) ===
+const STORAGE_KEY = "restoscan_lignes_v1";
+function sauvegarder(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(toutesLignes())); }catch(e){}
+}
+function charger(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length ? arr : null;
+  }catch(e){ return null; }
+}
+
+document.getElementById("ajouter").onclick = ()=>{creerLigne(ligneVide());majResume();sauvegarder();};
+document.getElementById("exemple").onclick = ()=>{corps.innerHTML="";EXEMPLE.forEach(creerLigne);majResume();sauvegarder();};
 
 document.querySelectorAll(".carte").forEach(c=>{
   c.onclick=()=>{document.querySelectorAll(".carte").forEach(x=>x.classList.remove("actif"));c.classList.add("actif");};
 });
 
-document.getElementById("generer").onclick = ()=>{
-  const lignes = toutesLignes();
-  if(lignes.length===0){sortie.innerHTML='<div class="muted">Ajoutez au moins une facture.</div>';return;}
-  sortie.innerHTML = '<div class="ok">✅ Dans la version serveur complète, ceci téléchargerait votre Excel avec les factures injectées dans '+document.getElementById("mois").value+'.</div>';
-};
+// Sauvegarde a chaque modification de ligne.
+corps.addEventListener("input", sauvegarder);
 
-EXEMPLE.forEach(creerLigne);
+// Au demarrage : reprendre les lignes sauvegardees, sinon l'exemple.
+const sauve = charger();
+if(sauve){ sauve.forEach(creerLigne); }
+else { EXEMPLE.forEach(creerLigne); }
 majResume();
 </script>
 </body>
