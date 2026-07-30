@@ -59,6 +59,7 @@
   select.mois{padding:8px;border-radius:8px;border:1px solid var(--bord);font-size:14px}
   .scanbox{border:2px dashed var(--vert);border-radius:12px;padding:22px;text-align:center;background:var(--vert-clair);cursor:pointer;transition:.15s}
   .scanbox:hover{background:#dcefe4}
+  .scanbox.survol{background:#cde9d8;border-color:#1f7a4d;box-shadow:0 0 0 3px rgba(31,122,77,.2)}
   .scanbox .ico{font-size:32px}
   .scanbox p{margin:8px 0 0;font-size:13px;color:var(--doux)}
   .scan-status{margin-top:12px;font-size:13px}
@@ -111,7 +112,7 @@
     <div class="scanbox" id="scanbox">
       <div class="ico">📸</div>
       <strong>Scanner une facture</strong>
-      <p>Prenez ou choisissez une photo (ou PDF). GENGIS lit le fournisseur, la date, le montant et la TVA, puis remplit une ligne automatiquement.</p>
+      <p>Prenez une photo, choisissez un fichier, ou glissez-déposez ici une facture (image ou PDF). GENGIS lit le fournisseur, la date, le montant et la TVA, puis remplit une ligne automatiquement.</p>
       <input type="file" id="scanInput" accept="image/*,application/pdf" capture="environment" multiple style="display:none">
     </div>
     <div class="scan-status" id="scanStatus"></div>
@@ -371,7 +372,25 @@ const scanInput = document.getElementById("scanInput");
 const scanStatus = document.getElementById("scanStatus");
 scanbox.onclick = ()=>scanInput.click();
 scanInput.onchange = async ()=>{
-  const files = Array.from(scanInput.files||[]);
+  await traiterFichiers(Array.from(scanInput.files||[]));
+  scanInput.value="";
+};
+
+// Glisser-deposer : on peut deposer une ou plusieurs factures (photo ou PDF) sur la zone.
+["dragenter","dragover"].forEach(ev=>scanbox.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); scanbox.classList.add("survol");
+}));
+["dragleave","drop"].forEach(ev=>scanbox.addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); scanbox.classList.remove("survol");
+}));
+scanbox.addEventListener("drop", async e=>{
+  const files = Array.from(e.dataTransfer?.files||[]);
+  if(files.length) await traiterFichiers(files);
+});
+// Evite que le navigateur ouvre le fichier si on rate la zone.
+["dragover","drop"].forEach(ev=>window.addEventListener(ev, e=>{ e.preventDefault(); }));
+
+async function traiterFichiers(files){
   if(!files.length) return;
   scanStatus.innerHTML = '<span class="spin"></span>Lecture de '+files.length+' facture(s) par GENGIS...';
   let ok=0, ko=0;
@@ -384,9 +403,8 @@ scanInput.onchange = async ()=>{
     }catch(e){ ko++; }
   }
   majResume(); sauvegarder();
-  scanInput.value="";
   scanStatus.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' facture(s) ajoutée(s)'+(ko?' · '+ko+' non lue(s), à saisir à la main':'')+'. Vérifiez les catégories.</span>';
-};
+}
 
 function lireFichier(file){
   return new Promise((res,rej)=>{
