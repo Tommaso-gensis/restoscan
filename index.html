@@ -405,17 +405,20 @@ scanbox.addEventListener("drop", async e=>{
 async function traiterFichiers(files){
   if(!files.length) return;
   scanStatus.innerHTML = '<span class="spin"></span>Lecture de '+files.length+' facture(s) par GENGIS...';
-  let ok=0, ko=0;
+  let ok=0, ko=0, lignesAjoutees=0;
   for(const f of files){
     try{
       const dataUrl = await lireFichier(f);
-      const champs = await scannerFacture(dataUrl, f.type);
-      if(champs){ creerLigne({...ligneVide(), ...champs}); ok++; }
+      const factures = await scannerFacture(dataUrl, f.type);
+      if(factures && factures.length){
+        factures.forEach(champs=>{ creerLigne({...ligneVide(), ...champs}); lignesAjoutees++; });
+        ok++;
+      }
       else ko++;
     }catch(e){ ko++; }
   }
   majResume(); sauvegarder();
-  scanStatus.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' facture(s) ajoutée(s)'+(ko?' · '+ko+' non lue(s), à saisir à la main':'')+'. Vérifiez les catégories.</span>';
+  scanStatus.innerHTML = '<span style="color:var(--vert)">✅ '+ok+' fichier(s) lu(s), '+lignesAjoutees+' ligne(s) ajoutée(s)'+(ko?' · '+ko+' non lu(s), à saisir à la main':'')+'. Vérifiez les catégories.</span>';
 }
 
 function lireFichier(file){
@@ -434,13 +437,17 @@ async function scannerFacture(dataUrl, mime){
   });
   if(!r.ok) return null;
   const data = await r.json();
-  if(!data.ok || !data.facture) return null;
-  const fac = data.facture;
-  return {
+  if(!data.ok) return null;
+  // Nouveau format : data.factures = tableau. Repli : data.facture unique.
+  const liste = Array.isArray(data.factures) && data.factures.length
+    ? data.factures
+    : (data.facture ? [data.facture] : []);
+  if(!liste.length) return null;
+  return liste.map(fac=>({
     date: fac.date||"", fournisseur: fac.fournisseur||"", num: fac.num||"",
     libelle: fac.libelle||"", tauxTva: fac.tauxTva!=null?fac.tauxTva:6,
     htva: fac.htva!=null?fac.htva:"", tva: fac.tva!=null?fac.tva:"", ttc: fac.ttc!=null?fac.ttc:""
-  };
+  }));
 }
 
 // === Sauvegarde locale (survit au rechargement) ===
