@@ -67,6 +67,7 @@
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs" type="module"></script>
 <script type="module">
   // pdf.js sert a transformer un PDF (souvent un scan sans texte) en images
@@ -210,6 +211,15 @@
       <button class="btn" id="generer">⬇️ Générer & télécharger l'Excel</button>
     </div>
     <div id="sortie"></div>
+
+    <div class="sous" style="margin-top:22px;padding-top:18px;border-top:1px dashed var(--bord)">
+      <strong>Ou remplissez VOTRE fichier Excel</strong> — chargez votre classeur habituel (avec vos onglets par mois, marge, TVA/ONSS). GENGIS place le chiffre d'affaires et les factures d'achat aux bons endroits <em>sans toucher à vos formules ni à votre mise en page</em>. Les colonnes de paiement restent vides, à compléter à la main.
+    </div>
+    <div class="barre" style="margin-top:10px">
+      <input type="file" id="monExcel" accept=".xlsx" style="font-size:13px">
+      <button class="btn" id="remplir" disabled>📄 Remplir & télécharger mon fichier</button>
+    </div>
+    <div id="sortieRemplir"></div>
   </div>
 
 </div>
@@ -607,6 +617,159 @@ function genererExcel(lignes){
   XLSX.writeFile(wb, nomFichier);
   sortie.innerHTML = '<div class="ok">✅ Excel généré : <strong>'+nomFichier+'</strong> — '+march.length+' marchandise ('+totM.toFixed(2)+'€) + '+frais.length+' frais ('+totF.toFixed(2)+'€). Regardez vos téléchargements.</div>';
 }
+
+// ================================================
+// REMPLIR LE FICHIER EXCEL DE L'UTILISATEUR (ExcelJS -> preserve formules + mise en forme)
+// ================================================
+// On ecrit uniquement dans les cellules "donnees brutes" ; les colonnes calculees
+// (TOTAL, liquide, solde, MONTANT fournisseur...) restent des formules du classeur.
+const NOMS_MOIS_FR = ["JANV","FEVRIER","MARS","AVRIL","MAI","JUIN","JUILLET","AOUT","SEPT","OCT","NOV","DEC"];
+// Variantes tolerees dans les noms d'onglets (accents/abreviations).
+const VARIANTES_MOIS = [
+  ["janv","janvier"],["fevrier","février","fev"],["mars"],["avril","avr"],["mai"],["juin"],
+  ["juillet","juil"],["aout","août"],["sept","septembre"],["oct","octobre"],["nov","novembre"],["dec","déc","decembre","décembre"]
+];
+
+// Retrouve l'onglet du mois choisi dans le classeur de l'utilisateur.
+function trouverFeuilleMois(wb, moisLabel){
+  const idx = NOMS_MOIS_FR.findIndex(m => moisLabel.toUpperCase().startsWith(m));
+  const cible = idx>=0 ? VARIANTES_MOIS[idx] : null;
+  let trouvee = null;
+  wb.eachSheet(ws=>{
+    if(trouvee) return;
+    const n = (ws.name||"").toLowerCase();
+    if(cible && cible.some(v=>n.includes(v))) trouvee = ws;
+  });
+  return trouvee;
+}
+
+// Localise la ligne d'en-tete ("DATE"/"FACTURE") et les colonnes de chaque zone.
+// Robuste : on lit les libelles au lieu de coder les lettres en dur.
+function repererColonnes(ws){
+  // La ligne d'en-tete recette est celle qui contient "FACTURE" (avec DATE, 6, 12, 21).
+  // Attention : la zone fournisseurs a ses propres "DATE" une ligne au-dessus, donc on
+  // ancre sur "facture" pour ne pas confondre les deux zones.
+  let headerRow = null;
+  for(let r=1; r<=8 && !headerRow; r++){
+    const row = ws.getRow(r);
+    let hasFacture = false;
+    row.eachCell({includeEmpty:false},(cell)=>{
+      if(String(cell.value||"").trim().toLowerCase()==="facture") hasFacture = true;
+    });
+    if(hasFacture) headerRow = r;
+  }
+  headerRow = headerRow || 2;
+  const map = { headerRow, rec:{}, four:{} };
+  const row = ws.getRow(headerRow);
+  const row0 = ws.getRow(Math.max(1,headerRow-1));
+  row.eachCell({includeEmpty:false},(cell,col)=>{
+    const v = String(cell.value||"").trim().toLowerCase();
+    if(v==="date" && map.rec.date===undefined) map.rec.date = col;
+    else if(v==="facture") map.rec.num = col;
+    else if(v==="6") map.rec.ca6 = col;
+    else if(v==="12") map.rec.ca12 = col;
+    else if(v==="21") map.rec.ca21 = col;
+    else if(v==="carte") map.rec.carte = col;
+    else if(v==="bque"||v==="banque") map.rec.banque = col;
+  });
+  // Zone fournisseurs : reperee via la ligne au-dessus des en-tetes (FOURNISSEUR, HTVA, TVA...).
+  row0.eachCell({includeEmpty:false},(cell,col)=>{
+    const v = String(cell.value||"").trim().toLowerCase();
+    if(v==="fournisseur") map.four.fournisseur = col;
+    else if(v==="date" && map.four.fournisseur!==undefined && map.four.date===undefined) map.four.date = col;
+    else if(v==="reference"||v==="référence") map.four.ref = col;
+    else if(v==="htva") map.four.htva = col;
+    else if(v==="tva") map.four.tva = col;
+  });
+  return map;
+}
+
+// Ecrit une valeur sans casser une formule existante (on n'ecrase jamais une cellule formule).
+function poserValeur(ws, row, col, val){
+  if(col===undefined || val==="" || val===undefined || val===null) return;
+  const cell = ws.getRow(row).getCell(col);
+  if(cell.value && typeof cell.value==="object" && (cell.value.formula||cell.value.sharedFormula)) return;
+  cell.value = val;
+}
+
+document.getElementById("monExcel").onchange = (e)=>{
+  document.getElementById("remplir").disabled = !(e.target.files && e.target.files.length);
+};
+
+document.getElementById("remplir").onclick = async ()=>{
+  const out = document.getElementById("sortieRemplir");
+  const f = document.getElementById("monExcel").files[0];
+  if(!f){ out.innerHTML='<div class="muted">Choisissez d\'abord votre fichier .xlsx.</div>'; return; }
+  const lignes = toutesLignes();
+  const jours = tousLesJours();
+  if(lignes.length===0 && jours.length===0){ out.innerHTML='<div class="muted">Ajoutez au moins une facture ou un rapport Z avant de remplir.</div>'; return; }
+  out.innerHTML = '<div class="muted">Lecture de votre fichier…</div>';
+  try{
+    const mois = document.getElementById("mois").value;
+    const buf = await f.arrayBuffer();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = trouverFeuilleMois(wb, mois);
+    if(!ws){ out.innerHTML='<div class="ok" style="background:#fdecea;color:#c0392b;border-color:#e6a6a0">⚠️ Onglet du mois « '+mois+' » introuvable dans votre fichier. Vérifiez le nom de l\'onglet.</div>'; return; }
+    const map = repererColonnes(ws);
+
+    // 1) CHIFFRE D'AFFAIRES : une ligne par jour, placée sur la bonne date du mois.
+    let caPlaces = 0, caNonPlaces = 0;
+    // Index des lignes recette par jour-du-mois (col DATE contient une vraie date).
+    const parJour = {};
+    const rng = ws.rowCount;
+    for(let r=map.headerRow+1; r<=rng; r++){
+      const dcell = ws.getRow(r).getCell(map.rec.date);
+      const dv = dcell && dcell.value;
+      if(dv instanceof Date) parJour[dv.getDate()] = r;
+    }
+    jours.forEach(j=>{
+      const d = j.date ? new Date(j.date) : null;
+      const jour = d && !isNaN(d) ? d.getUTCDate() : null;
+      const r = jour ? parJour[jour] : null;
+      if(!r){ caNonPlaces++; return; }
+      poserValeur(ws, r, map.rec.num, j.num);
+      poserValeur(ws, r, map.rec.ca6, Number(j.ca6)||0);
+      poserValeur(ws, r, map.rec.ca12, Number(j.ca12)||0);
+      poserValeur(ws, r, map.rec.ca21, Number(j.ca21)||0);
+      poserValeur(ws, r, map.rec.carte, Number(j.carte)||0);
+      poserValeur(ws, r, map.rec.banque, Number(j.banque)||0);
+      caPlaces++;
+    });
+
+    // 2) FACTURES D'ACHAT : dans la zone fournisseurs, à la suite (paiement laissé vide).
+    let fPlaces = 0;
+    if(map.four.fournisseur!==undefined){
+      // Premiere ligne fournisseur libre = juste sous l'en-tete de cette zone.
+      let rf = map.headerRow + 1;
+      // On saute les lignes deja remplies (fournisseur non vide).
+      while(rf<=rng){ const c=ws.getRow(rf).getCell(map.four.fournisseur).value; if(c===null||c===undefined||String(c).trim()==="") break; rf++; }
+      lignes.forEach(x=>{
+        poserValeur(ws, rf, map.four.fournisseur, x.fournisseur);
+        if(map.four.date!==undefined && x.date){ const dd=new Date(x.date); if(!isNaN(dd)) poserValeur(ws, rf, map.four.date, dd); }
+        poserValeur(ws, rf, map.four.ref, x.num);
+        poserValeur(ws, rf, map.four.htva, Number(x.htva)||0);
+        poserValeur(ws, rf, map.four.tva, Number(x.tva)||0);
+        rf++; fPlaces++;
+      });
+    }
+
+    const buf2 = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf2], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const base = (f.name||"mon_fichier.xlsx").replace(/\.xlsx$/i,"");
+    a.href=url; a.download = base+"_rempli.xlsx"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+
+    let msg = '✅ Fichier rempli et téléchargé. CA : '+caPlaces+' jour(s) placé(s)';
+    if(caNonPlaces) msg += ' ('+caNonPlaces+' jour(s) hors du mois « '+mois+' », ignorés)';
+    msg += ' · factures d\'achat : '+fPlaces+' placée(s). Vos formules et votre mise en page sont intactes.';
+    out.innerHTML = '<div class="ok">'+msg+'</div>';
+  }catch(err){
+    out.innerHTML = '<div class="ok" style="background:#fdecea;color:#c0392b;border-color:#e6a6a0">⚠️ Impossible de remplir le fichier : '+(err.message||err)+'. Vérifiez que c\'est bien un .xlsx.</div>';
+  }
+};
 
 // === Scan de facture : photo/PDF -> GENGIS lit -> remplit une ligne ===
 const scanbox = document.getElementById("scanbox");
