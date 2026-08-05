@@ -866,7 +866,11 @@ function afficherEtatLie(){
 
 // Au chargement : si un fichier a deja ete lie, on le recupere.
 (async()=>{
-  if(!supporteFSA){ if(zoneLie) zoneLie.style.display="none"; return; }
+  if(!supporteFSA){
+    if(btnLier) btnLier.style.display="none";
+    if(sortieLie) sortieLie.innerHTML='<div class="muted">Sur ce navigateur (téléphone, Safari ou Firefox), la liaison directe du fichier n\'est pas disponible. Utilisez le bouton <strong>« 📄 Remplir &amp; télécharger mon fichier »</strong> juste en dessous : choisissez votre .xlsx, GENGIS le remplit et vous le renvoie. Pour la mise à jour en un clic sur place, ouvrez GENGIS avec <strong>Chrome ou Edge sur ordinateur</strong>.</div>';
+    return;
+  }
   try{ handleClasseur = await idbGet(IDB_CLE) || null; }catch(e){ handleClasseur = null; }
   afficherEtatLie();
 })();
